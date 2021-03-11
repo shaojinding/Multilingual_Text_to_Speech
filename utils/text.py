@@ -14,7 +14,10 @@ _unk = '@'    # symbols which are not in hp.characters and are present are subst
 
 
 def _other_symbols():
-    return [_pad, _eos, _unk] + list(hp.punctuations_in) + list(hp.punctuations_out)
+    if hp.use_phonemes:
+        return [_pad, _eos, _unk]
+    else:
+        return [_pad, _eos, _unk] + list(hp.punctuations_in) + list(hp.punctuations_out)
 
 
 def build_phoneme_dicts(text_lang_pairs):
@@ -115,8 +118,10 @@ def remove_punctuation(text):
 def to_sequence(text, use_phonemes=False):
     """Converts a string of text to a sequence of IDs corresponding to the symbols in the text."""
     transform_dict = {s: i for i, s in enumerate(_other_symbols() + list(hp.phonemes if use_phonemes else hp.characters))}
+    # print(transform_dict)
     sequence = [transform_dict[_unk] if c not in transform_dict else transform_dict[c] for c in text]
     sequence.append(transform_dict[_eos])
+    # print(sequence)
     return sequence
 
 

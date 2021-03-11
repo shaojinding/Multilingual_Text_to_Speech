@@ -234,6 +234,7 @@ class Tacotron(torch.nn.Module):
 
         # Encoder embedding 
         other_symbols = 3 # PAD, EOS, UNK
+        # print(hp.symbols_count())
         self._embedding = Embedding(hp.symbols_count() + other_symbols, 
                                     hp.embedding_dimension, padding_idx=0)
         torch.nn.init.xavier_uniform_(self._embedding.weight)
@@ -360,6 +361,7 @@ class Tacotron(torch.nn.Module):
             languages = languages.unsqueeze(1).expand((-1, text.size(1)))
 
         # encode input
+        # print(text.max())
         embedded = self._embedding(text)
         encoded = self._encoder(embedded, text_length, languages)
         encoder_output = encoded

@@ -1,11 +1,23 @@
 import sys
 import os
 import numpy as np
+from epitran.backoff import Backoff
+import dragonmapper.transcriptions
+import re
 
 sys.path.insert(0, "../")
 
 from utils import audio
 from params.params import Params as hp
+
+language_to_epitran_key = {
+    'de': 'deu-Latn',
+    'fr': 'fra-Latn',
+    'ru': 'rus-Cyrl',
+    'zh': 'cmn-Hans',
+    'nl': 'nld-Latn',
+    'en': 'eng-Latn'}
+
 
 
 if __name__ == '__main__':
@@ -16,6 +28,8 @@ if __name__ == '__main__':
     parser.add_argument("--css10_directory", type=str, default="css10", help="Base directory of CSS10.")
     parser.add_argument("--css_comvoi_directory", type=str, default="css_comvoi", help="Base directory of CSS10 with Common Voice.")
     parser.add_argument("--comvoi_directory", type=str, default="comvoi_clean", help="Base directory of Common Voice.")
+    parser.add_argument("--css_comvoi_librispeech_directory", type=str, default="css_comvoi_librispeech", help="Base directory of Common Voice.")
+    parser.add_argument("--librispeech_directory", type=str, default="librispeech_clean_100", help="Base directory of CSS10.")
     parser.add_argument("--sample_rate", type=int, default=22050, help="Sample rate.")
     parser.add_argument("--num_fft", type=int, default=1102, help="Number of FFT frequencies.")
     parser.add_argument("--num_mels", type=int, default=80, help="Number of mel bins.")
@@ -30,16 +44,21 @@ if __name__ == '__main__':
     hp.num_fft = args.num_fft
 
     files_to_solve = [
-        (args.css10_directory, "train.txt"),
-        (args.css10_directory, "val.txt"),
-        (args.css_comvoi_directory, "train.txt"),
-        (args.css_comvoi_directory, "val.txt"),
+        #(args.css10_directory, "train.txt"),
+        #(args.css10_directory, "val.txt"),
+        #(args.css_comvoi_directory, "train.txt"),
+        #(args.css_comvoi_directory, "val.txt"),
+        # (args.css_comvoi_librispeech_directory, "train_template.txt"),
+        (args.css_comvoi_librispeech_directory, "train_en_template.txt"),
+        (args.css_comvoi_librispeech_directory, "val_template.txt"),
     ]
 
     spectrogram_dirs = [os.path.join(args.comvoi_directory, 'spectrograms'), 
                         os.path.join(args.comvoi_directory, 'linear_spectrograms'),
                         os.path.join(args.css10_directory, 'spectrograms'), 
-                        os.path.join(args.css10_directory, 'linear_spectrograms')]
+                        os.path.join(args.css10_directory, 'linear_spectrograms'),
+                        os.path.join(args.librispeech_directory, 'spectrograms'),
+                        os.path.join(args.librispeech_directory, 'linear_spectrograms'),]
     for x in spectrogram_dirs:
         if not os.path.exists(x): os.makedirs(x)
 
@@ -47,12 +66,12 @@ if __name__ == '__main__':
     for d, fs in files_to_solve:
         with open(os.path.join(d,fs), 'r', encoding='utf-8') as f:
             metadata.append((d, fs, [line.rstrip().split('|') for line in f]))
-
+    # print(metadata)
     print(f'Please wait, this may take a very long time.')
     for d, fs, m in metadata:  
         print(f'Creating spectrograms for: {fs}')
 
-        with open(os.path.join(d, fs), 'w', encoding='utf-8') as f:
+        with open(os.path.join(d, '_'.join(fs.split('_')[:-1]) + '.txt'), 'w', encoding='utf-8') as f:
             for i in m:
                 idx, s, l, a, _, _, raw_text, ph = i
                 spec_name = idx + '.npy'      
@@ -73,5 +92,14 @@ if __name__ == '__main__':
                 lin_path = os.path.join(d, lin_path_partial)
                 if not os.path.exists(lin_path):
                     np.save(lin_path, audio.spectrogram(audio_data, False))
+                
+                if len(ph) == 0:
+                    if l == 'zh':
+                        ph = dragonmapper.transcriptions.pinyin_to_ipa(raw_text)
+                    else:
+                        backoff = Backoff([language_to_epitran_key[l], 'eng-Latn'], cedict_file='cedict_1_0_ts_utf-8_mdbg.txt')
+                        ph = backoff.transliterate(raw_text)
+                    ph = re.sub('[ʲʰ]+', '', ph)
+                    print(ph)
 
                 print(f'{idx}|{s}|{l}|{a}|{mel_path_partial}|{lin_path_partial}|{raw_text}|{ph}', file=f)

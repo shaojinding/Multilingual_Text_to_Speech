@@ -1,6 +1,7 @@
 import os
 import time
 import datetime
+import logging
 import math
 import numpy as np
 import torch
@@ -10,7 +11,7 @@ from dataset.dataset import TextToSpeechDatasetCollection, TextToSpeechCollate
 from params.params import Params as hp
 from utils import audio, text
 from modules.tacotron2 import Tacotron, TacotronLoss
-from utils.logging import Logger
+from utils.logging import Logger, create_logger, ProgressMeter, AverageMeter
 from utils.samplers import RandomImbalancedSampler, PerfectBatchSampler
 from utils import lengths_to_mask, to_gpu
 
@@ -37,6 +38,7 @@ def train(logging_start_epoch, epoch, data, model, criterion, optimizer):
         criterion -- instance of loss function to be optimized
         optimizer -- instance of optimizer which will be used for parameter updates
     """
+    text_logger = logging.getLogger(__name__)
 
     model.train() 
 
@@ -44,6 +46,14 @@ def train(logging_start_epoch, epoch, data, model, criterion, optimizer):
     learning_rate = optimizer.param_groups[0]['lr']
     cla = 0
     done, start_time = 0, time.time()
+
+    total_loss = AverageMeter('Total Loss', ':.4e')
+    mel_pre_loss = AverageMeter('Mel Pre Loss', ':.4e')
+    mel_post_loss = AverageMeter('Mel Post Loss', ':.4e')
+    lang_class_acc =  AverageMeter('Lang Class Acc', ':.4e')
+    progress = ProgressMeter(
+            len(data), total_loss, mel_pre_loss, mel_post_loss, lang_class_acc,
+            prefix="Epoch: [{}]".format(epoch), logger=text_logger)
 
     # loop through epoch batches
     for i, batch in enumerate(data):     
@@ -68,6 +78,11 @@ def train(logging_start_epoch, epoch, data, model, criterion, optimizer):
         loss, batch_losses = criterion(src_len, trg_len, pre_pred, trg_mel, post_pred, post_trg, stop_pred, stop_trg, alignment, 
                                        spkrs, spkrs_pred, enc_output, classifier)
 
+        total_loss.update(loss, src.size(0))        
+        mel_pre_loss.update(batch_losses['mel_pre'], src.size(0))
+        mel_post_loss.update(batch_losses['mel_pos'], src.size(0))
+        
+
         # evaluate adversarial classifier accuracy, if present
         if hp.reversal_classifier:
             input_mask = lengths_to_mask(src_len)
@@ -78,6 +93,8 @@ def train(logging_start_epoch, epoch, data, model, criterion, optimizer):
             matches = (trg_spkrs == torch.argmax(torch.nn.functional.softmax(spkrs_pred, dim=-1), dim=-1))
             matches[~input_mask] = False
             cla = torch.sum(matches).item() / torch.sum(input_mask).item()
+            lang_class_acc.update(cla, src.size(0))
+
 
         # comptute gradients and make a step
         loss.backward()      
@@ -87,6 +104,7 @@ def train(logging_start_epoch, epoch, data, model, criterion, optimizer):
         # log training progress
         if epoch >= logging_start_epoch:
             Logger.training(global_step, batch_losses, gradient, learning_rate, time.time() - start_time, cla) 
+            progress.print(i)
 
         # update criterion states (params and decay of the loss and so on ...)
         criterion.update_states()
@@ -104,6 +122,7 @@ def evaluate(epoch, data, model, criterion):
         model -- model to be evaluated
         criterion -- instance of loss function to measure performance
     """
+    text_logger = logging.getLogger(__name__)
 
     model.eval()
 
@@ -111,6 +130,15 @@ def evaluate(epoch, data, model, criterion):
     mcd, mcd_count = 0, 0
     cla, cla_count = 0, 0
     eval_losses = {}
+
+    total_loss = AverageMeter('Total Loss', ':.4e')
+    mel_pre_loss = AverageMeter('Mel Pre Loss', ':.4e')
+    mel_post_loss = AverageMeter('Mel Post Loss', ':.4e')
+    lang_class_acc =  AverageMeter('Lang Class Acc', ':.4e')
+    progress = ProgressMeter(
+            len(data), total_loss, mel_pre_loss, mel_post_loss, lang_class_acc,
+            prefix="Epoch: [{}]".format(epoch), logger=text_logger)
+
 
     # loop through epoch batches
     with torch.no_grad():  
@@ -130,8 +158,10 @@ def evaluate(epoch, data, model, criterion):
             classifier = model._reversal_classifier if hp.reversal_classifier else None
             loss, batch_losses = criterion(src_len, trg_len, pre_pred, trg_mel, post_pred, post_trg, stop_pred, stop_trg, alignment, 
                                            spkrs, spkrs_pred, enc_output, classifier)
-            
-            # compute mel cepstral distorsion
+            total_loss.update(loss, src.size(0))        
+            mel_pre_loss.update(batch_losses['mel_pre'], src.size(0))
+            mel_post_loss.update(batch_losses['mel_pos'], src.size(0))
+                        # compute mel cepstral distorsion
             for j, (gen, ref, stop) in enumerate(zip(post_pred_0, trg_mel, stop_pred_probs)):
                 stop_idxes = np.where(stop.cpu().numpy() > 0.5)[0]
                 stop_idx = min(np.min(stop_idxes) + hp.stop_frames, gen.size()[1]) if len(stop_idxes) > 0 else gen.size()[1]
@@ -155,6 +185,8 @@ def evaluate(epoch, data, model, criterion):
                 matches[~input_mask] = False
                 cla = (cla_count * cla + torch.sum(matches).item() / torch.sum(input_mask).item()) / (cla_count+1)
                 cla_count += 1
+                lang_class_acc.update(cla, src.size(0))
+
 
             # add batch losses to epoch losses
             for k, v in batch_losses.items(): 
@@ -165,6 +197,7 @@ def evaluate(epoch, data, model, criterion):
         eval_losses[k] /= len(data)
 
     # log evaluation
+    progress.print(i)
     Logger.evaluation(epoch+1, eval_losses, mcd, src_len, trg_len, src, post_trg, post_pred, post_pred_0, stop_pred_probs, stop_trg, alignment_0, cla)
     
     return sum(eval_losses.values())
@@ -255,6 +288,7 @@ if __name__ == '__main__':
         if hp.parallelization and args.max_gpus > 1 and torch.cuda.device_count() > 1:
             model = DataParallelPassthrough(model, device_ids=list(range(args.max_gpus)))
     else: model = Tacotron()
+    #model = Tacotron()
 
     # instantiate optimizer and scheduler
     optimizer = torch.optim.Adam(model.parameters(), lr=hp.learning_rate, weight_decay=hp.weight_decay)
@@ -288,6 +322,7 @@ if __name__ == '__main__':
     # initialize logger
     log_dir = os.path.join(args.base_directory, "logs", f'{hp.version}-{datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")}')
     Logger.initialize(log_dir, args.flush_seconds)
+    text_logger = create_logger(log_dir)
 
     # training loop
     best_eval = float('inf')

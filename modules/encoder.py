@@ -38,7 +38,7 @@ class Encoder(torch.nn.Module):
         x = self._convs(x)
         x = x.transpose(1, 2)
         ml = x.size(1)
-        x = torch.nn.utils.rnn.pack_padded_sequence(x, x_lenghts, batch_first=True)
+        x = torch.nn.utils.rnn.pack_padded_sequence(x, x_lenghts.cpu(), batch_first=True, enforce_sorted=False)
         self._lstm.flatten_parameters()
         x, _ = self._lstm(x)
         x, _ = torch.nn.utils.rnn.pad_packed_sequence(x, batch_first=True, total_length=ml) 

@@ -122,8 +122,8 @@ class Params:
     ******************** PARAMETERS OF AUDIO ********************
     """
 
-    sample_rate = 22050                  # sample rate of source .wavs, used while computing spectrograms, MFCCs, etc.
-    num_fft = 1102                       # number of frequency bins used during computation of spectrograms
+    sample_rate = 16000                  # sample rate of source .wavs, used while computing spectrograms, MFCCs, etc.
+    num_fft = 1024                       # number of frequency bins used during computation of spectrograms
     num_mels = 80                        # number of mel bins used during computation of mel spectrograms
     num_mfcc = 13                        # number of MFCCs, used just for MCD computation (during training)
     stft_window_ms = 50                  # size in ms of the Hann window of short-time Fourier transform, used during spectrogram computation

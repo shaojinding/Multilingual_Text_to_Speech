@@ -4,14 +4,15 @@ from fastdtw import fastdtw
 import librosa
 import librosa.feature
 import librosa.effects
-import soundfile as sf
+# import soundfile as sf
 
 from params.params import Params as hp
 
 
 def load(path):
     """Load a sound file into numpy array."""
-    data, sample_rate = sf.read(path)
+    # data, sample_rate = sf.read(path)
+    data, sample_rate = librosa.load(path, sr=hp.sample_rate)
     assert hp.sample_rate == sample_rate, (
         f'Sample rate do not match: given {hp.sample_rate}, expected {sample_rate}')
     return data
